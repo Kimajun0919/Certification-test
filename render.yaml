@@ -1,0 +1,32 @@
+###############################################################################
+# render.yaml — Render.com Blueprint
+#
+# GitHub에 push하면 Render가 이 파일을 읽어 자동으로 서비스를 생성합니다.
+# https://render.com/docs/blueprint-spec
+###############################################################################
+
+services:
+  - type: web
+    name: qr-checkin-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free                  # free tier (512MB RAM, spins down after 15min idle)
+    healthCheckPath: /health
+
+    envVars:
+      - key: DATABASE_BACKEND
+        value: memory           # Google Sheets 쓸 때는 sheets 로 변경
+
+      # 아래 두 값은 Render 대시보드에서 직접 입력 (보안)
+      - key: FRONTEND_BASE_URL
+        sync: false             # 배포 후 Vercel URL 로 수동 설정
+      - key: CORS_ORIGINS
+        sync: false             # 배포 후 Vercel URL 로 수동 설정
+
+      # Google Sheets 사용 시 아래 주석 해제
+      # - key: GOOGLE_SHEETS_ID
+      #   sync: false
+      # - key: GOOGLE_SA_KEY_FILE
+      #   value: service_account.json

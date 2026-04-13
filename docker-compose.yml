@@ -1,0 +1,64 @@
+###############################################################################
+# Docker Compose — QR Event Check-in System
+#
+# 사용법 (로컬 Docker 실행):
+#   docker compose up --build
+#
+# 서비스:
+#   backend  → FastAPI  (내부 포트 8000)
+#   frontend → nginx    (외부 포트 80, /api/* 는 backend 로 프록시)
+###############################################################################
+
+services:
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: qr_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env          # DATABASE_BACKEND, FRONTEND_BASE_URL, CORS_ORIGINS …
+    environment:
+      # Docker Compose 환경에서는 프론트가 같은 호스트에 있으므로 80 포트 사용
+      FRONTEND_BASE_URL: "${FRONTEND_BASE_URL:-http://localhost}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost}"
+    volumes:
+      # Google Sheets 키 파일이 있을 때만 마운트 (없으면 주석 처리)
+      # - ./backend/service_account.json:/app/service_account.json:ro
+      - backend_logs:/app/logs
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── React Frontend (nginx) ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Docker 환경에서 /api 는 nginx 가 backend 컨테이너로 프록시하므로 빈 값
+        VITE_API_URL: ""
+    container_name: qr_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app_network
+
+volumes:
+  backend_logs:
+
+networks:
+  app_network:
+    driver: bridge
