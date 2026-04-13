@@ -1,17 +1,30 @@
 """
 Database abstraction layer.
 
-The abstract base class `Database` defines the interface every backend must
-implement.  Two concrete implementations are provided:
+InMemoryDatabase   – 로컬 개발용
+GoogleSheetsDatabase – 실제 운영용 (Google Sheets API v4)
 
-  - InMemoryDatabase   – zero-dependency, great for local dev / testing
-  - GoogleSheetsDatabase – wraps Google Sheets via the Sheets API v4
-
-Switch between them by setting DATABASE_BACKEND in your .env file.
+실제 시트 컬럼 구조:
+  A  타임스탬프
+  B  1. 소속 다락방
+  C  2. 소속 순
+  D  3. 이름              → name
+  E  4. 성별
+  F  5. 연락처            → phone
+  G  6. (출발 차량) ...
+  H  7. (복귀 차량) ...
+  I  중보로 함께하겠습니다
+  J  회비 입금 안내
+  K  입금완료여부         → payment_status  ("완료" → paid)
+  L  qr_token            → 자동 추가
+  M  checked_in          → 자동 추가
+  N  checked_in_at       → 자동 추가
 """
 
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -28,78 +41,49 @@ from models import PaymentStatus, User
 class Database(ABC):
     @abstractmethod
     def get_user(self, user_id: str) -> Optional[User]: ...
-
     @abstractmethod
     def get_user_by_token(self, token: str) -> Optional[User]: ...
-
     @abstractmethod
     def get_all_users(self) -> List[User]: ...
-
     @abstractmethod
     def create_user(self, user: User) -> User: ...
-
     @abstractmethod
     def update_user(self, user: User) -> User: ...
 
 
 # ---------------------------------------------------------------------------
-# In-memory implementation (default)
+# In-memory (개발용)
 # ---------------------------------------------------------------------------
 
 class InMemoryDatabase(Database):
-    """Thread-unsafe in-memory store — suitable for single-worker dev servers.
-
-    For multi-worker production use, replace with GoogleSheetsDatabase or a
-    proper SQL backend (PostgreSQL + SQLAlchemy is the recommended upgrade
-    path; the same interface is preserved).
-    """
-
     def __init__(self) -> None:
         self._users: Dict[str, User] = {}
-        self._token_index: Dict[str, str] = {}  # token → user_id
+        self._token_index: Dict[str, str] = {}
         self._seed()
 
-    # ------------------------------------------------------------------
-    # Seed data
-    # ------------------------------------------------------------------
-
     def _seed(self) -> None:
-        seed = [
+        for user in [
             User(id="usr_001", name="Alice Kim",    phone="010-1234-5678", payment_status=PaymentStatus.paid),
             User(id="usr_002", name="Bob Lee",      phone="010-8765-4321", payment_status=PaymentStatus.pending),
             User(id="usr_003", name="Charlie Park", phone="010-1111-2222", payment_status=PaymentStatus.paid),
             User(id="usr_004", name="Diana Choi",   phone="010-9999-0000", payment_status=PaymentStatus.pending),
-        ]
-        for user in seed:
+        ]:
             self._store(user)
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _store(self, user: User) -> None:
-        """Write user to primary store and keep token index consistent."""
         old = self._users.get(user.id)
         if old and old.qr_token and old.qr_token != user.qr_token:
-            # Remove stale token mapping
             self._token_index.pop(old.qr_token, None)
-
         self._users[user.id] = deepcopy(user)
         if user.qr_token:
             self._token_index[user.qr_token] = user.id
-
-    # ------------------------------------------------------------------
-    # Database interface
-    # ------------------------------------------------------------------
 
     def get_user(self, user_id: str) -> Optional[User]:
         return deepcopy(self._users.get(user_id))
 
     def get_user_by_token(self, token: str) -> Optional[User]:
-        user_id = self._token_index.get(token)
-        if user_id:
-            return deepcopy(self._users.get(user_id))
-        return None
+        uid = self._token_index.get(token)
+        return deepcopy(self._users.get(uid)) if uid else None
 
     def get_all_users(self) -> List[User]:
         return [deepcopy(u) for u in self._users.values()]
@@ -118,137 +102,171 @@ class InMemoryDatabase(Database):
 
 
 # ---------------------------------------------------------------------------
-# Google Sheets implementation
+# Google Sheets (운영용)
 # ---------------------------------------------------------------------------
 
+# 기존 시트의 고정 컬럼 인덱스 (0-based)
+_COL_NAME    = 3   # D: 이름
+_COL_PHONE   = 5   # F: 연락처
+_COL_PAYMENT = 10  # K: 입금완료여부
+
+# 자동 추가되는 컬럼 인덱스
+_COL_TOKEN      = 11  # L: qr_token
+_COL_CHECKED_IN = 12  # M: checked_in
+_COL_CHECKED_AT = 13  # N: checked_in_at
+
+# 입금완료 값으로 인정하는 문자열
+_PAID_VALUES = {"완료", "o", "y", "yes", "true", "1", "paid", "✓", "v"}
+
+
+def _parse_payment(val: str) -> PaymentStatus:
+    return PaymentStatus.paid if val.strip().lower() in _PAID_VALUES else PaymentStatus.pending
+
+
 class GoogleSheetsDatabase(Database):
-    """Persists all data in a Google Sheets spreadsheet.
-
-    Sheet layout (one header row, then one row per user):
-        A: id | B: name | C: phone | D: payment_status
-        E: qr_token | F: checked_in | G: checked_in_at
-
-    Set up:
-        1. Create a Service Account in Google Cloud Console.
-        2. Share the spreadsheet with the service account email.
-        3. Download the JSON key file and set GOOGLE_SA_KEY_FILE in .env.
-        4. Set GOOGLE_SHEETS_ID to your spreadsheet ID.
-        5. Set DATABASE_BACKEND=sheets in .env.
+    """
+    실제 구글 폼 응답 시트와 연동.
+    - 기존 컬럼은 수정하지 않음
+    - L(qr_token) / M(checked_in) / N(checked_in_at) 헤더가 없으면 자동 추가
+    - Service Account 인증은 파일 또는 환경변수(JSON 문자열) 모두 지원
     """
 
-    HEADER = ["id", "name", "phone", "payment_status",
-              "qr_token", "checked_in", "checked_in_at"]
-    SHEET_NAME = "Users"
+    SHEET_NAME = "시트1"          # 시트 탭 이름 (기본값, 다르면 환경변수로 변경 가능)
+    EXTRA_HEADERS = ["qr_token", "checked_in", "checked_in_at"]
 
-    def __init__(self, spreadsheet_id: str, credentials_file: str) -> None:
+    def __init__(self, spreadsheet_id: str, credentials) -> None:
         try:
             import gspread
-            from google.oauth2.service_account import Credentials
-        except ImportError as exc:
-            raise RuntimeError(
-                "Google Sheets backend requires 'gspread' and "
-                "'google-auth'. Run: pip install gspread google-auth"
-            ) from exc
+        except ImportError as e:
+            raise RuntimeError("pip install gspread 를 먼저 실행하세요.") from e
 
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-        ]
-        creds = Credentials.from_service_account_file(credentials_file, scopes=scopes)
-        self._client = gspread.authorize(creds)
-        self._spreadsheet_id = spreadsheet_id
-        self._ws = self._get_or_create_worksheet()
+        self._client = gspread.authorize(credentials)
+        self._sid = spreadsheet_id
+        sheet_name = os.getenv("GOOGLE_SHEET_NAME", self.SHEET_NAME)
+        self._ws = self._client.open_by_key(self._sid).worksheet(sheet_name)
+        self._ensure_extra_columns()
 
     # ------------------------------------------------------------------
-    # Worksheet setup
+    # 추가 컬럼 헤더 보장
     # ------------------------------------------------------------------
 
-    def _get_or_create_worksheet(self):
-        sh = self._client.open_by_key(self._spreadsheet_id)
-        try:
-            ws = sh.worksheet(self.SHEET_NAME)
-        except Exception:
-            ws = sh.add_worksheet(title=self.SHEET_NAME, rows=1000, cols=len(self.HEADER))
-            ws.append_row(self.HEADER)
-        return ws
+    def _ensure_extra_columns(self) -> None:
+        """L·M·N 헤더가 없으면 1행에 자동으로 추가."""
+        header_row = self._ws.row_values(1)
+        # 컬럼이 부족하면 패딩
+        while len(header_row) < _COL_TOKEN + 1:
+            header_row.append("")
+
+        changed = False
+        for i, h in enumerate(self.EXTRA_HEADERS):
+            col = _COL_TOKEN + i
+            if col >= len(header_row) or header_row[col].strip() == "":
+                # gspread는 1-indexed
+                self._ws.update_cell(1, col + 1, h)
+                changed = True
+
+        if changed:
+            print("[sheets] extra columns (qr_token / checked_in / checked_in_at) added to header row")
 
     # ------------------------------------------------------------------
-    # Row <-> User conversion
+    # 행 <-> User 변환
     # ------------------------------------------------------------------
 
-    def _row_to_user(self, row: list) -> Optional[User]:
-        if not row or not row[0]:
-            return None
-        # Pad short rows
-        row = row + [""] * (len(self.HEADER) - len(row))
-        try:
-            return User(
-                id=row[0],
-                name=row[1],
-                phone=row[2],
-                payment_status=PaymentStatus(row[3]) if row[3] else PaymentStatus.pending,
-                qr_token=row[4] or None,
-                checked_in=str(row[5]).lower() in ("true", "1", "yes"),
-                checked_in_at=datetime.fromisoformat(row[6]) if row[6] else None,
-            )
-        except Exception:
+    def _row_to_user(self, row: list, row_index: int) -> Optional[User]:
+        """row_index: 1-based 시트 행 번호 (헤더=1, 첫 데이터=2)."""
+        if not row or not any(row):
             return None
 
-    def _user_to_row(self, user: User) -> list:
-        return [
-            user.id,
-            user.name,
-            user.phone,
-            user.payment_status,
-            user.qr_token or "",
-            str(user.checked_in),
-            user.checked_in_at.isoformat() if user.checked_in_at else "",
-        ]
+        def get(idx: int) -> str:
+            return row[idx].strip() if idx < len(row) else ""
+
+        name  = get(_COL_NAME)
+        phone = get(_COL_PHONE)
+        if not name and not phone:
+            return None
+
+        payment_val = get(_COL_PAYMENT)
+        qr_token    = get(_COL_TOKEN) or None
+        checked_in  = get(_COL_CHECKED_IN).lower() in ("true", "1", "yes")
+        checked_at_str = get(_COL_CHECKED_AT)
+        checked_at  = datetime.fromisoformat(checked_at_str) if checked_at_str else None
+
+        return User(
+            id=str(row_index),           # 행 번호를 ID로 사용
+            name=name,
+            phone=phone,
+            payment_status=_parse_payment(payment_val),
+            qr_token=qr_token,
+            checked_in=checked_in,
+            checked_in_at=checked_at,
+        )
+
+    # ------------------------------------------------------------------
+    # 헬퍼
+    # ------------------------------------------------------------------
+
+    def _all_data(self) -> list:
+        """헤더를 포함한 모든 행 반환."""
+        return self._ws.get_all_values()
+
+    def _find_row(self, user_id: str) -> Optional[int]:
+        """user_id(행 번호 문자열) → 1-based 시트 행 인덱스."""
+        try:
+            return int(user_id)
+        except ValueError:
+            return None
+
+    def _update_extra_cols(self, row_idx: int, user: User) -> None:
+        """L·M·N 컬럼만 업데이트 (기존 데이터 보존)."""
+        self._ws.update(
+            f"L{row_idx}:N{row_idx}",
+            [[
+                user.qr_token or "",
+                str(user.checked_in),
+                user.checked_in_at.isoformat() if user.checked_in_at else "",
+            ]]
+        )
 
     # ------------------------------------------------------------------
     # Database interface
     # ------------------------------------------------------------------
 
-    def _all_rows(self) -> list:
-        """Return all data rows (excluding header)."""
-        return self._ws.get_all_values()[1:]
-
-    def _find_row_index(self, user_id: str) -> Optional[int]:
-        """Return 1-based sheet row index for the given user_id, or None."""
-        rows = self._ws.get_all_values()
-        for i, row in enumerate(rows):
-            if row and row[0] == user_id:
-                return i + 1  # Sheets rows are 1-indexed
-        return None
-
-    def get_user(self, user_id: str) -> Optional[User]:
-        for row in self._all_rows():
-            if row and row[0] == user_id:
-                return self._row_to_user(row)
-        return None
-
-    def get_user_by_token(self, token: str) -> Optional[User]:
-        for row in self._all_rows():
-            if len(row) > 4 and row[4] == token:
-                return self._row_to_user(row)
-        return None
-
     def get_all_users(self) -> List[User]:
+        rows = self._all_data()
         users = []
-        for row in self._all_rows():
-            user = self._row_to_user(row)
+        for i, row in enumerate(rows[1:], start=2):  # 헤더(row 1) 스킵
+            user = self._row_to_user(row, i)
             if user:
                 users.append(user)
         return users
 
+    def get_user(self, user_id: str) -> Optional[User]:
+        row_idx = self._find_row(user_id)
+        if not row_idx:
+            return None
+        row = self._ws.row_values(row_idx)
+        return self._row_to_user(row, row_idx)
+
+    def get_user_by_token(self, token: str) -> Optional[User]:
+        rows = self._all_data()
+        for i, row in enumerate(rows[1:], start=2):
+            if len(row) > _COL_TOKEN and row[_COL_TOKEN].strip() == token:
+                return self._row_to_user(row, i)
+        return None
+
     def create_user(self, user: User) -> User:
-        self._ws.append_row(self._user_to_row(user))
-        return user
+        """구글 폼 데이터가 이미 있으므로 일반적으로 사용 안 함."""
+        raise NotImplementedError("Google Sheets 모드에서는 폼을 통해 등록합니다.")
 
     def update_user(self, user: User) -> User:
-        idx = self._find_row_index(user.id)
-        if idx is None:
-            raise KeyError(f"User {user.id!r} not found in sheet")
-        self._ws.update(f"A{idx}:G{idx}", [self._user_to_row(user)])
+        row_idx = self._find_row(user.id)
+        if not row_idx:
+            raise KeyError(f"User {user.id!r} not found")
+        # K열: 입금완료여부 → "완료" / "" 로 기록
+        payment_val = "완료" if user.payment_status == PaymentStatus.paid else ""
+        self._ws.update_cell(row_idx, _COL_PAYMENT + 1, payment_val)
+        # L·M·N열: qr_token / checked_in / checked_in_at
+        self._update_extra_cols(row_idx, user)
         return user
 
 
@@ -257,14 +275,31 @@ class GoogleSheetsDatabase(Database):
 # ---------------------------------------------------------------------------
 
 def create_database() -> Database:
-    """Read DATABASE_BACKEND from environment and return the correct instance."""
-    import os
     backend = os.getenv("DATABASE_BACKEND", "memory").lower()
 
     if backend == "sheets":
-        spreadsheet_id = os.environ["GOOGLE_SHEETS_ID"]
-        credentials_file = os.environ["GOOGLE_SA_KEY_FILE"]
-        return GoogleSheetsDatabase(spreadsheet_id, credentials_file)
+        try:
+            from google.oauth2.service_account import Credentials
+        except ImportError as e:
+            raise RuntimeError("pip install google-auth 를 먼저 실행하세요.") from e
 
-    # Default: in-memory
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+
+        spreadsheet_id = os.environ["GOOGLE_SHEETS_ID"]
+
+        # 방법 1: 환경변수에 JSON 내용 직접 (Railway 등 클라우드)
+        key_json_str = os.getenv("GOOGLE_SA_KEY_JSON")
+        if key_json_str:
+            key_data = json.loads(key_json_str)
+            credentials = Credentials.from_service_account_info(key_data, scopes=scopes)
+        else:
+            # 방법 2: 로컬 파일 경로
+            key_file = os.environ["GOOGLE_SA_KEY_FILE"]
+            credentials = Credentials.from_service_account_file(key_file, scopes=scopes)
+
+        return GoogleSheetsDatabase(spreadsheet_id, credentials)
+
     return InMemoryDatabase()
