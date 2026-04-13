@@ -1,6 +1,6 @@
 # Core — 버전 고정 완화: Python 3.14 호환 wheel이 있는 최신 버전을 자동 선택
 fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
+uvicorn[standard]>=0.30.0,<0.40.0
 pydantic>=2.11.0
 python-dotenv>=1.0.0
 
