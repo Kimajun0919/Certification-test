@@ -1,14 +1,14 @@
-# Core
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
-pydantic==2.10.3
-python-dotenv==1.0.1
+# Core — 버전 고정 완화: Python 3.14 호환 wheel이 있는 최신 버전을 자동 선택
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.11.0
+python-dotenv>=1.0.0
 
-# Google Sheets (optional — only needed when DATABASE_BACKEND=sheets)
-gspread==6.1.4
-google-auth==2.37.0
+# Google Sheets (optional — DATABASE_BACKEND=sheets 일 때만 필요)
+gspread>=6.1.0
+google-auth>=2.37.0
 
 # Dev / testing
-httpx==0.28.1        # for FastAPI TestClient
-pytest==8.3.4
-pytest-asyncio==0.25.0
+httpx>=0.27.0
+pytest>=8.0.0
+pytest-asyncio>=0.25.0
