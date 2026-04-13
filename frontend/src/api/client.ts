@@ -104,12 +104,17 @@ export async function checkin(qr_token: string): Promise<CheckinResponse> {
 // QR page (public) — fetch user by token without auth
 // ---------------------------------------------------------------------------
 
-/**
- * The QR page needs to know who the token belongs to.
- * We call GET /users and filter client-side rather than exposing a dedicated
- * public endpoint; replace with a dedicated /qr/{token} GET route if desired.
- */
 export async function getUserByToken(token: string): Promise<User | null> {
-  const users = await getUsers()
-  return users.find((u) => u.qr_token === token) ?? null
+  try {
+    const { data } = await http.get<User>(`/users/token/${encodeURIComponent(token)}`)
+    return data
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      err.message === 'QR code not found or has been revoked.'
+    ) {
+      return null
+    }
+    throw err
+  }
 }

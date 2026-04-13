@@ -3,6 +3,20 @@ from fastapi.testclient import TestClient
 from main import app
 
 
+def test_get_user_by_token_returns_user():
+    with TestClient(app) as client:
+        qr_res = client.post("/generate-qr", json={"user_id": "usr_001"})
+        assert qr_res.status_code == 200
+        token = qr_res.json()["qr_token"]
+
+        user_res = client.get(f"/users/token/{token}")
+        assert user_res.status_code == 200
+        payload = user_res.json()
+        assert payload["id"] == "usr_001"
+        assert payload["name"] == "Alice Kim"
+        assert payload["qr_token"] == token
+
+
 def test_cancel_payment_resets_qr_and_attendance():
     with TestClient(app) as client:
         qr_res = client.post("/generate-qr", json={"user_id": "usr_001"})
