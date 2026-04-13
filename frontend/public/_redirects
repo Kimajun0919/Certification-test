@@ -1,0 +1,4 @@
+# Cloudflare Pages — SPA fallback routing
+# React Router가 /qr/:token, /scanner, /admin 등을 처리할 수 있게
+# 존재하지 않는 경로는 모두 index.html 로 넘김
+/*  /index.html  200
