@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# .env 파일을 환경변수로 로드 (파일이 없어도 오류 없음)
+load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
