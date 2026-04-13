@@ -107,19 +107,23 @@ function AddUserModal({ onClose, onCreated }: AddUserModalProps) {
 interface RowActionsProps {
   user: User
   onUpdated: (user: User) => void
+  onError: (message: string | null) => void
 }
 
-function RowActions({ user, onUpdated }: RowActionsProps) {
+function RowActions({ user, onUpdated, onError }: RowActionsProps) {
   const [busy, setBusy] = useState(false)
   const [copyLabel, setCopyLabel] = useState('Copy URL')
 
   const togglePayment = async () => {
     setBusy(true)
+    onError(null)
     try {
       const next: PaymentStatus =
         user.payment_status === 'paid' ? 'pending' : 'paid'
       const updated = await updatePayment(user.id, next)
       onUpdated(updated)
+    } catch (ex: unknown) {
+      onError(ex instanceof Error ? ex.message : 'Failed to update payment status')
     } finally {
       setBusy(false)
     }
@@ -127,10 +131,13 @@ function RowActions({ user, onUpdated }: RowActionsProps) {
 
   const handleGenerateQR = async () => {
     setBusy(true)
+    onError(null)
     try {
       const res = await generateQR(user.id)
       // Optimistically patch the user row with the new QR info
       onUpdated({ ...user, qr_token: res.qr_token, qr_url: res.qr_url })
+    } catch (ex: unknown) {
+      onError(ex instanceof Error ? ex.message : 'Failed to generate QR code')
     } finally {
       setBusy(false)
     }
@@ -138,9 +145,12 @@ function RowActions({ user, onUpdated }: RowActionsProps) {
 
   const handleCancelCheckin = async () => {
     setBusy(true)
+    onError(null)
     try {
       const updated = await cancelCheckin(user.id)
       onUpdated(updated)
+    } catch (ex: unknown) {
+      onError(ex instanceof Error ? ex.message : 'Failed to cancel check-in')
     } finally {
       setBusy(false)
     }
@@ -248,6 +258,10 @@ export default function AdminPage() {
     setShowAddModal(false)
   }
 
+  const handleActionError = (message: string | null) => {
+    setError(message)
+  }
+
   // Client-side search / filter
   const filtered = users.filter((u) => {
     const q = search.toLowerCase()
@@ -353,7 +367,11 @@ export default function AdminPage() {
                       {fmt(user.checked_in_at)}
                     </td>
                     <td className="px-4 py-3">
-                      <RowActions user={user} onUpdated={handleUpdated} />
+                      <RowActions
+                        user={user}
+                        onUpdated={handleUpdated}
+                        onError={handleActionError}
+                      />
                     </td>
                   </tr>
                 ))

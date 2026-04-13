@@ -74,8 +74,17 @@ export async function updatePayment(
 
 /** Cancel attendance for a participant without changing payment or QR. */
 export async function cancelCheckin(userId: string): Promise<User> {
-  const { data } = await http.delete<User>(`/users/${userId}/checkin`)
-  return data
+  try {
+    const { data } = await http.delete<User>(`/users/${userId}/checkin`)
+    return data
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'Not Found') {
+      throw new Error(
+        'Cancel check-in is not available on the deployed backend yet. Redeploy the backend service.',
+      )
+    }
+    throw err
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -109,11 +118,15 @@ export async function getUserByToken(token: string): Promise<User | null> {
     const { data } = await http.get<User>(`/users/token/${encodeURIComponent(token)}`)
     return data
   } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      err.message === 'QR code not found or has been revoked.'
-    ) {
-      return null
+    if (err instanceof Error) {
+      if (err.message === 'QR code not found or has been revoked.') {
+        const users = await getUsers()
+        return users.find((u) => u.qr_token === token) ?? null
+      }
+      if (err.message === 'Not Found') {
+        const users = await getUsers()
+        return users.find((u) => u.qr_token === token) ?? null
+      }
     }
     throw err
   }
