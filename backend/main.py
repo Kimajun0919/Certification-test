@@ -100,3 +100,13 @@ def health():
 @app.get("/", tags=["system"], summary="Root redirect info")
 def root():
     return {"message": "QR Check-in API", "docs": "/docs"}
+
+
+# ---------------------------------------------------------------------------
+# 직접 실행 시 (python main.py) — Railway의 $PORT 자동 인식
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
