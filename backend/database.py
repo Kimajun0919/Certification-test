@@ -294,6 +294,9 @@ def create_database() -> Database:
         key_json_str = os.getenv("GOOGLE_SA_KEY_JSON")
         if key_json_str:
             key_data = json.loads(key_json_str)
+            # Railway 등 일부 환경에서 private_key의 \n이 \\n으로 이중 이스케이프됨 → 복원
+            if "private_key" in key_data:
+                key_data["private_key"] = key_data["private_key"].replace("\\n", "\n")
             credentials = Credentials.from_service_account_info(key_data, scopes=scopes)
         else:
             # 방법 2: 로컬 파일 경로

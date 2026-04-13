@@ -28,10 +28,17 @@ from routers import checkin, qr, users
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    app.state.db = create_database()
-    print(f"[startup] database backend: {os.getenv('DATABASE_BACKEND', 'memory')}")
+    try:
+        backend = os.getenv("DATABASE_BACKEND", "memory")
+        print(f"[startup] database backend: {backend}")
+        app.state.db = create_database()
+        print(f"[startup] database ready")
+    except Exception as e:
+        import traceback
+        print(f"[startup ERROR] {e}")
+        traceback.print_exc()
+        raise
     yield
-    # Shutdown (clean up resources if needed)
     print("[shutdown] application stopped")
 
 
