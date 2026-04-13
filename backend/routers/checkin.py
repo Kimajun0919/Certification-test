@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 
-from models import CheckinRequest, CheckinResponse
+from models import CheckinRequest, CheckinResponse, PaymentStatus
 from database import Database
 
 router = APIRouter(prefix="/checkin", tags=["checkin"])
@@ -36,6 +36,12 @@ def checkin(body: CheckinRequest, request: Request, db: Database = Depends(get_d
     user = db.get_user_by_token(token)
 
     if not user:
+        return CheckinResponse(
+            status="invalid",
+            message="QR code is invalid or has been revoked.",
+        )
+
+    if user.payment_status != PaymentStatus.paid or not user.qr_token:
         return CheckinResponse(
             status="invalid",
             message="QR code is invalid or has been revoked.",

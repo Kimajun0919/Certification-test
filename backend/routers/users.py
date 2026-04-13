@@ -69,7 +69,7 @@ def create_user(body: UserCreate, request: Request, db: Database = Depends(get_d
 @router.get("/token/{token}", response_model=UserResponse, summary="Get user by QR token")
 def get_user_by_token(token: str, request: Request, db: Database = Depends(get_db)):
     user = db.get_user_by_token(token)
-    if not user:
+    if not user or not user.qr_token or user.payment_status != PaymentStatus.paid:
         raise HTTPException(status_code=404, detail="QR code not found or has been revoked.")
     return user_to_response(user, request)
 

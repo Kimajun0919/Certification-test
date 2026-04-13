@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
+from database import _normalize_user_state
 from main import app
+from models import PaymentStatus, User
 
 
 def test_get_user_by_token_returns_user():
@@ -15,6 +17,24 @@ def test_get_user_by_token_returns_user():
         assert payload["id"] == "usr_001"
         assert payload["name"] == "Alice Kim"
         assert payload["qr_token"] == token
+
+
+def test_pending_user_state_is_normalized():
+    user = User(
+        id="usr_sheet_pending",
+        name="Pending User",
+        phone="010-2222-3333",
+        payment_status=PaymentStatus.pending,
+        qr_token="stale-token",
+        checked_in=True,
+    )
+
+    normalized = _normalize_user_state(user)
+
+    assert normalized.payment_status == PaymentStatus.pending
+    assert normalized.qr_token is None
+    assert normalized.checked_in is False
+    assert normalized.checked_in_at is None
 
 
 def test_cancel_payment_resets_qr_and_attendance():

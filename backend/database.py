@@ -51,6 +51,15 @@ class Database(ABC):
     def update_user(self, user: User) -> User: ...
 
 
+def _normalize_user_state(user: User) -> User:
+    normalized = deepcopy(user)
+    if normalized.payment_status != PaymentStatus.paid:
+        normalized.qr_token = None
+        normalized.checked_in = False
+        normalized.checked_in_at = None
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # In-memory (개발용)
 # ---------------------------------------------------------------------------
@@ -71,6 +80,7 @@ class InMemoryDatabase(Database):
             self._store(user)
 
     def _store(self, user: User) -> None:
+        user = _normalize_user_state(user)
         old = self._users.get(user.id)
         if old and old.qr_token and old.qr_token != user.qr_token:
             self._token_index.pop(old.qr_token, None)
@@ -197,7 +207,7 @@ class GoogleSheetsDatabase(Database):
         checked_at_str = get(_COL_CHECKED_AT)
         checked_at  = datetime.fromisoformat(checked_at_str) if checked_at_str else None
 
-        return User(
+        user = User(
             id=str(row_index),           # 행 번호를 ID로 사용
             name=name,
             phone=phone,
@@ -206,6 +216,7 @@ class GoogleSheetsDatabase(Database):
             checked_in=checked_in,
             checked_in_at=checked_at,
         )
+        return _normalize_user_state(user)
 
     # ------------------------------------------------------------------
     # 헬퍼

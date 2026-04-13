@@ -10,7 +10,7 @@
  * Mirrors the Google Sheets view exactly.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   cancelCheckin,
   createUser,
@@ -234,20 +234,66 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
+  const syncInFlightRef = useRef(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const attachMissingQrs = useCallback(async (nextUsers: User[]): Promise<User[]> => {
+    const candidates = nextUsers.filter(
+      (user) => user.payment_status === 'paid' && !user.qr_token,
+    )
+    if (candidates.length === 0) return nextUsers
+
+    const generated = await Promise.all(
+      candidates.map(async (user) => {
+        try {
+          const res = await generateQR(user.id)
+          return [
+            user.id,
+            { ...user, qr_token: res.qr_token, qr_url: res.qr_url },
+          ] as const
+        } catch {
+          return [user.id, user] as const
+        }
+      }),
+    )
+
+    const qrByUserId = new Map(generated)
+    return nextUsers.map((user) => qrByUserId.get(user.id) ?? user)
+  }, [])
+
+  const load = useCallback(async (showSpinner = true) => {
+    if (syncInFlightRef.current) return
+    syncInFlightRef.current = true
+
+    if (showSpinner) {
+      setLoading(true)
+    }
+
     try {
-      setUsers(await getUsers())
+      const fetched = await getUsers()
+      const hydrated = await attachMissingQrs(fetched)
+      setUsers(hydrated)
+      setError(null)
     } catch (ex: unknown) {
       setError(ex instanceof Error ? ex.message : 'Failed to load users')
     } finally {
-      setLoading(false)
+      syncInFlightRef.current = false
+      if (showSpinner) {
+        setLoading(false)
+      }
     }
-  }, [])
+  }, [attachMissingQrs])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    void load(true)
+  }, [load])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void load(false)
+    }, 5000)
+
+    return () => window.clearInterval(intervalId)
+  }, [load])
 
   const handleUpdated = (updated: User) => {
     setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)))
@@ -290,7 +336,7 @@ export default function AdminPage() {
           <button onClick={() => setShowAddModal(true)} className="btn-primary">
             + Add
           </button>
-          <button onClick={load} disabled={loading} className="btn-ghost">
+          <button onClick={() => { void load(true) }} disabled={loading} className="btn-ghost">
             {loading ? '…' : '↻'} Refresh
           </button>
         </div>
