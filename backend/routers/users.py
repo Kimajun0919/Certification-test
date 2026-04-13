@@ -88,5 +88,10 @@ def update_payment(
         raise HTTPException(status_code=404, detail="User not found")
 
     user.payment_status = body.payment_status
+    if body.payment_status == PaymentStatus.pending:
+        # Cancelled payments must revoke QR access and clear attendance state.
+        user.qr_token = None
+        user.checked_in = False
+        user.checked_in_at = None
     updated = db.update_user(user)
     return user_to_response(updated, request)
