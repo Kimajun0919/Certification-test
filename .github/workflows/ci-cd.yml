@@ -1,18 +1,9 @@
 ###############################################################################
-# CI / CD — QR Event Check-in System
-#
-# Triggers:
-#   push / PR  → main : CI (lint + test + build)
-#   push       → main : CD (deploy frontend to Vercel)
-#
-# Secrets to add in GitHub → Settings → Secrets → Actions:
-#   VERCEL_TOKEN        : Vercel 계정 토큰  (vercel.com/account/tokens)
-#   VERCEL_ORG_ID       : vercel.json 배포 후 .vercel/project.json 에서 확인
-#   VERCEL_PROJECT_ID   : 위와 동일
-#   RENDER_DEPLOY_HOOK  : Render 서비스 → Settings → Deploy Hook URL
+# CI — QR Event Check-in System
+# push / PR → main : 백엔드 문법 검사 + 프론트엔드 타입 검사 & 빌드
 ###############################################################################
 
-name: CI / CD
+name: CI
 
 on:
   push:
@@ -20,7 +11,6 @@ on:
   pull_request:
     branches: [main]
 
-# 같은 브랜치에 연속 push 시 이전 실행 취소
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -28,7 +18,7 @@ concurrency:
 jobs:
 
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 1: Backend — lint & test
+  # JOB 1: Backend — 문법 검사
   # ─────────────────────────────────────────────────────────────────────────
   backend-ci:
     name: Backend CI
@@ -51,16 +41,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Check syntax (py compile)
+      - name: Check syntax
         run: python -m py_compile main.py models.py database.py routers/*.py
 
       - name: Run tests
         run: |
-          # pytest가 없으면 스킵 (테스트 파일이 없을 경우)
           if ls tests/ 2>/dev/null | grep -q test_; then
             pytest tests/ -v --tb=short
           else
-            echo "No test files found — skipping pytest"
+            echo "No test files found — skipping"
           fi
         env:
           DATABASE_BACKEND: memory
@@ -68,7 +57,7 @@ jobs:
           CORS_ORIGINS: http://localhost:5173
 
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 2: Frontend — type check & build
+  # JOB 2: Frontend — 타입 검사 & 빌드
   # ─────────────────────────────────────────────────────────────────────────
   frontend-ci:
     name: Frontend CI
@@ -96,9 +85,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          # CI 빌드 시 실제 백엔드 URL 주입 (없으면 /api 프록시 사용)
-          VITE_API_URL: ${{ vars.VITE_API_URL || '' }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -106,45 +92,3 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
           retention-days: 7
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # JOB 3: Deploy frontend → Vercel  (main 브랜치 push 시만)
-  # ─────────────────────────────────────────────────────────────────────────
-  deploy-frontend:
-    name: Deploy Frontend (Vercel)
-    needs: [backend-ci, frontend-ci]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
-
-      - name: Deploy to Vercel (Production)
-        working-directory: frontend
-        run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # JOB 4: Deploy backend → Render  (main 브랜치 push 시만)
-  # ─────────────────────────────────────────────────────────────────────────
-  deploy-backend:
-    name: Deploy Backend (Render)
-    needs: [backend-ci, frontend-ci]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-      - name: Trigger Render Deploy Hook
-        run: |
-          curl -sS --fail -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" | \
-            python3 -c "import sys, json; d=json.load(sys.stdin); print('Deploy triggered:', d.get('id','?'))"
