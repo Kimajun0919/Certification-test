@@ -288,7 +288,16 @@ def create_database() -> Database:
             "https://www.googleapis.com/auth/drive",
         ]
 
-        spreadsheet_id = os.environ["GOOGLE_SHEETS_ID"]
+        # 디버그: 어떤 환경변수가 주입됐는지 확인
+        sheet_keys = [k for k in os.environ if "GOOGLE" in k or "DATABASE" in k]
+        print(f"[sheets] available env keys: {sheet_keys}")
+
+        spreadsheet_id = os.environ.get("GOOGLE_SHEETS_ID") or os.environ.get("GOOGLE_SHEET_ID")
+        if not spreadsheet_id:
+            raise RuntimeError(
+                f"GOOGLE_SHEETS_ID 환경변수가 없습니다. "
+                f"현재 환경변수 키 목록: {list(os.environ.keys())}"
+            )
 
         # 방법 1: 환경변수에 JSON 내용 직접 (Railway 등 클라우드)
         key_json_str = os.getenv("GOOGLE_SA_KEY_JSON")
