@@ -72,6 +72,12 @@ export async function updatePayment(
   return data
 }
 
+/** Cancel attendance for a participant without changing payment or QR. */
+export async function cancelCheckin(userId: string): Promise<User> {
+  const { data } = await http.delete<User>(`/users/${userId}/checkin`)
+  return data
+}
+
 // ---------------------------------------------------------------------------
 // QR generation
 // ---------------------------------------------------------------------------

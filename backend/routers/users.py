@@ -95,3 +95,17 @@ def update_payment(
         user.checked_in_at = None
     updated = db.update_user(user)
     return user_to_response(updated, request)
+
+
+@router.delete("/{user_id}/checkin", response_model=UserResponse,
+               summary="Cancel check-in")
+def cancel_checkin(user_id: str, request: Request, db: Database = Depends(get_db)):
+    """Clear a participant's attendance state without changing payment or QR."""
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.checked_in = False
+    user.checked_in_at = None
+    updated = db.update_user(user)
+    return user_to_response(updated, request)

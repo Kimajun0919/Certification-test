@@ -11,7 +11,13 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { generateQR, getUsers, updatePayment, createUser } from '@/api/client'
+import {
+  cancelCheckin,
+  createUser,
+  generateQR,
+  getUsers,
+  updatePayment,
+} from '@/api/client'
 import type { PaymentStatus, User } from '@/types'
 import StatusBadge from '@/components/StatusBadge'
 import LoadingSpinner from '@/components/LoadingSpinner'
@@ -130,6 +136,16 @@ function RowActions({ user, onUpdated }: RowActionsProps) {
     }
   }
 
+  const handleCancelCheckin = async () => {
+    setBusy(true)
+    try {
+      const updated = await cancelCheckin(user.id)
+      onUpdated(updated)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const copyQRUrl = () => {
     if (!user.qr_url) return
     navigator.clipboard.writeText(user.qr_url).then(() => {
@@ -166,6 +182,16 @@ function RowActions({ user, onUpdated }: RowActionsProps) {
       )}
 
       {/* Copy QR URL — only when token exists */}
+      {user.checked_in && (
+        <button
+          onClick={handleCancelCheckin}
+          disabled={busy}
+          className="text-xs px-2 py-1 rounded-md font-medium bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50"
+        >
+          Cancel Check-in
+        </button>
+      )}
+
       {user.qr_url && (
         <>
           <a

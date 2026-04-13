@@ -28,3 +28,27 @@ def test_cancel_payment_resets_qr_and_attendance():
         revoked_res = client.post("/checkin", json={"qr_token": token})
         assert revoked_res.status_code == 200
         assert revoked_res.json()["status"] == "invalid"
+
+
+def test_cancel_checkin_clears_attendance_but_keeps_qr_valid():
+    with TestClient(app) as client:
+        qr_res = client.post("/generate-qr", json={"user_id": "usr_003"})
+        assert qr_res.status_code == 200
+        token = qr_res.json()["qr_token"]
+
+        checkin_res = client.post("/checkin", json={"qr_token": token})
+        assert checkin_res.status_code == 200
+        assert checkin_res.json()["status"] == "success"
+
+        cancel_res = client.delete("/users/usr_003/checkin")
+        assert cancel_res.status_code == 200
+        payload = cancel_res.json()
+        assert payload["checked_in"] is False
+        assert payload["checked_in_at"] is None
+        assert payload["payment_status"] == "paid"
+        assert payload["qr_token"] == token
+        assert payload["qr_url"] is not None
+
+        recheckin_res = client.post("/checkin", json={"qr_token": token})
+        assert recheckin_res.status_code == 200
+        assert recheckin_res.json()["status"] == "success"
