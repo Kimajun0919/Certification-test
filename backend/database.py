@@ -143,7 +143,13 @@ class GoogleSheetsDatabase(Database):
         self._client = gspread.authorize(credentials)
         self._sid = spreadsheet_id
         sheet_name = os.getenv("GOOGLE_SHEET_NAME", self.SHEET_NAME)
-        self._ws = self._client.open_by_key(self._sid).worksheet(sheet_name)
+        print(f"[sheets] connecting to spreadsheet={spreadsheet_id}, sheet={sheet_name}")
+        try:
+            self._ws = self._client.open_by_key(self._sid).worksheet(sheet_name)
+            print(f"[sheets] connected OK. row count: {self._ws.row_count}")
+        except Exception as e:
+            print(f"[sheets] connection error: {type(e).__name__}: {e}")
+            raise
         self._ensure_extra_columns()
 
     # ------------------------------------------------------------------
